@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import {
@@ -171,31 +171,161 @@ export default function AppExperience() {
 }
 
 function Dashboard({exam}:{exam:string}) {
+  const records=getRecordsForExam(exam as ExamName);
+  const resume=getResumeRecord(records);
+  const summary=calculateStudySummary(records);
+  const recent=[...records].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).slice(0,3);
+  const completedScored=records.filter(record=>record.status==="completed"&&record.scored);
+
   return <>
-    <p className="page-description">Your current target is {exam}. Continue with a small, focused study task.</p>
-    <div className="card-grid">
-      <section className="card"><h2>Continue practice</h2><p>Review quantitative aptitude questions grouped by chapter, with a clear progression through each set.</p></section>
-      <section className="card"><h2>Recent test preparation</h2><p>Mock Tests and Chapter Tests will provide study options here in the next implementation step.</p></section>
+    <section className="dashboard-greeting" aria-label="Exam context">
+      <h2>Ready for {exam}?</h2>
+      <p>Current target exam: <strong>{exam}</strong></p>
+    </section>
+
+    {resume && <section className="continue-card" aria-labelledby="continue-title">
+      <div>
+        <span className="section-label">Continue Learning</span>
+        <h2 id="continue-title">{resume.title}</h2>
+        <p>{resume.mode} Mode · {resume.mode==="Practice"
+          ? `${resume.checkedPracticeAnswers ?? 0} of ${resume.totalQuestions} answers checked`
+          : `${resume.answeredQuestions} of ${resume.totalQuestions} questions answered`}</p>
+      </div>
+      <Link className="primary-button" href={`/assessment?attempt=${encodeURIComponent(resume.id)}&mode=${resume.mode.toLowerCase()}&question=${resume.mode==="Practice"?"4":"9"}`}>
+        <Icon name={resume.mode==="Practice"?"chapter":"test"} size={18}/>
+        {resume.mode==="Practice"?"Resume practice":"Resume mock"}
+      </Link>
+    </section>}
+
+    <section className="dashboard-section" aria-labelledby="quick-actions-title">
+      <h2 id="quick-actions-title">Quick Actions</h2>
+      <div className="quick-actions">
+        <Link className={resume?"secondary-button":"primary-button"} href="/mock-tests"><Icon name="test"/>Start Mock Test</Link>
+        <Link className="secondary-button" href="/pyqs"><Icon name="pyq"/>Practise PYQs</Link>
+        <Link className="secondary-button" href="/chapter-tests"><Icon name="chapter"/>Start Chapter Test</Link>
+      </div>
+    </section>
+
+    <section className="dashboard-section" aria-labelledby="overview-title">
+      <h2 id="overview-title">Study Overview</h2>
+      <dl className="metrics">
+        <div><dt>Tests Completed</dt><dd>{summary.testsCompleted}</dd></div>
+        <div><dt>Questions Attempted</dt><dd>{summary.questionsAttempted}</dd></div>
+        <div><dt>Average Accuracy</dt><dd aria-label={summary.accuracy===null?"Average accuracy unavailable":`${Math.round(summary.accuracy)} percent`}>
+          {summary.accuracy===null?"—":`${Math.round(summary.accuracy)}%`}
+        </dd></div>
+        {summary.averageScore!==null&&<div><dt>Average Score</dt><dd>{Math.round(summary.averageScore)}%</dd></div>}
+      </dl>
+    </section>
+
+    <div className="dashboard-columns">
+      <section className="dashboard-section" aria-labelledby="activity-title">
+        <div className="section-heading">
+          <h2 id="activity-title">Recent Activity</h2>
+          <Link className="text-link" href="/my-tests">View all</Link>
+        </div>
+        {recent.length===0?<p className="muted-copy">No activity yet for {exam}. A mock test is a clear place to begin.</p>:<ul className="activity-list">
+          {recent.map(record=><li key={record.id}>
+            <div><strong>{record.title}</strong><span>{record.mode} · {record.status==="completed"?"Completed":"In progress"}</span></div>
+            {record.status==="completed"&&record.score!==undefined&&record.maxMarks!==undefined
+              ?<span className="activity-score" aria-label={`Score ${record.score} out of ${record.maxMarks}`}>{record.score}/{record.maxMarks}</span>
+              :record.status==="in-progress"&&<Link className="text-link" href={`/assessment?attempt=${record.id}&mode=${record.mode.toLowerCase()}&question=${record.mode==="Practice"?"4":"9"`}>Resume</Link>}
+          </li>)}
+        </ul>}
+      </section>
+
+      <section className="dashboard-section" aria-labelledby="snapshot-title">
+        <h2 id="snapshot-title">Performance Snapshot</h2>
+        {completedScored.length<TREND_ATTEMPT_THRESHOLD?<>
+          <p className="muted-copy">
+            {completedScored.length===0
+              ? "No completed scored tests are available for a trend."
+              : <>{completedScored.length} of {TREND_ATTEMPT_THRESHOLD} comparable attempts used for a trend; {TREND_ATTEMPT_THRESHOLD-completedScored.length} more needed.</>}
+          </p>
+          {summary.accuracy!==null&&<p className="snapshot-detail">Current checked accuracy: <strong>{Math.round(summary.accuracy)}%</strong></p>}
+        </>:<>
+          <ScoreTrend records={completedScored}/>
+          <SubjectSnapshot records={records}/>
+        </>}
+        <p className="next-action"><strong>Recommended next action:</strong>{" "}
+          {resume
+            ? `Finish ${resume.mode==="Practice"?"the practice set":"the mock"} before starting another activity.`
+            : completedScored.length>=TREND_ATTEMPT_THRESHOLD
+              ? "Review your English responses in Chapter Tests."
+              : "Start a mock test to establish a study baseline."}
+        </p>
+      </section>
     </div>
+  </>;
+}
+
+function ScoreTrend({records}:{records:ActivityRecord[]}) {
+  const scores=[...records].sort((a,b)=>a.updatedAt.localeCompare(b.updatedAt)).map(record=>record.score ?? 0);
+  return <p className="snapshot-detail">Score trend: <strong>{scores.join(" → ")}</strong><span className="sr-only">, out of 100 for each comparable attempt</span></p>;
+}
+
+function SubjectSnapshot({records}:{records:ActivityRecord[]}) {
+  const subjects=getSubjectSnapshot(records);
+  const entries=Object.entries(subjects).filter(([,value])=>value && value.evaluated>0) as [string,{evaluated:number;correct:number}][];
+  if(entries.length===0)return null;
+  entries.sort((a,b)=>((b[1].correct/b[1].evaluated)-(a[1].correct/a[1].evaluated)));
+  const weakest=entries[entries.length-1];
+  return <>
+    <ul className="subject-list" aria-label="Subject accuracy">
+      {entries.map(([subject,value])=><li key={subject}><span>{subject}</span><strong>{Math.round(value.correct/value.evaluated*100)}%</strong></li>)}
+    </ul>
+    <p className="snapshot-detail">Potential weaker area: <strong>{weakest[0]}</strong>, with {weakest[1].correct} of {weakest[1].evaluated} evaluated responses correct.</p>
   </>;
 }
 
 function MinimalRoute({title,exam}:{title:string;exam:string}) {
   const router=useRouter();
+  if(title==="My Tests"){
+    const records=getRecordsForExam(exam as ExamName).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
+    return <section className="card">
+      <h2>My Tests</h2>
+      {records.length===0?<p style={{marginBottom:24}}>No tests or practice activity are saved for {exam}.</p>:<ul className="activity-list minimal-activity">
+        {records.map(record=><li key={record.id}><div><strong>{record.title}</strong><span>{record.mode} · {record.status==="completed"?"Completed":"In progress"}</span></div>
+          {record.status==="in-progress"?<Link className="text-link" href={`/assessment?attempt=${record.id}&mode=${record.mode.toLowerCase()}&question=${record.mode==="Practice"?"4":"9"}`}>Resume</Link>:record.score!==undefined&&record.maxMarks!==undefined?<span className="activity-score">{record.score}/{record.maxMarks}</span>:null}
+        </li>)}
+      </ul>}
+      <button className="secondary-button" style={{marginTop:24}} onClick={()=>router.push("/dashboard")}><Icon name="grid"/>Return to Dashboard</button>
+    </section>;
+  }
   const known=title==="Preferences"?`Set ${exam} preferences and study choices here.`:`This ${title} destination is ready for its feature page. It is using the shared student workspace for ${exam}.`;
   return <section className="card"><h2>{title}</h2><p style={{marginBottom:24}}>{known}</p><button className="secondary-button" onClick={()=>router.push("/dashboard")}><Icon name="grid"/>Return to Dashboard</button></section>;
 }
 
 function Assessment({answer,setAnswer}:{answer:string;setAnswer:(v:string)=>void}) {
   const router=useRouter();
+  const params=useSearchParams();
+  const attempt=params.get("attempt")||"";
+  const mode=params.get("mode")==="practice"?"Practice":"Exam";
+  const question=params.get("question")==="4"?"4":"9";
+  const isChsl=attempt==="chsl-practice-2026-01";
+  const storageKey=`sscflix-answer-${attempt||"default"}`;
   const options=["A logical fallacy occurs only in spoken arguments.","The conclusion follows without sufficient evidence from the premises.","A statement is false unless it is supported by an official source.","The argument uses technical vocabulary to create confusion."];
+  useEffect(()=>{
+    try{
+      const stored=localStorage.getItem(storageKey);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setAnswer(stored||(isChsl?"C":"B"));
+    }catch{
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setAnswer(isChsl?"C":"B");
+    }
+  },[storageKey,isChsl,setAnswer]);
+  function saveAnswer(value:string){
+    setAnswer(value);
+    try{localStorage.setItem(storageKey,value);}catch{}
+  }
   return <div className="assessment-shell">
-    <header className="assessment-header"><div className="assessment-title"><strong>Reasoning Practice</strong><span>Question 1 of 1</span></div><button className="secondary-button" onClick={()=>router.push("/dashboard")}><Icon name="close" size={18}/>Exit</button></header>
+    <header className="assessment-header"><div className="assessment-title"><strong>{isChsl?"Percentage - Guided Practice":"SSC CGL Tier I - Full Mock 1"}</strong><span>{mode} Mode · Question {question} of {isChsl?"10":"25"}</span></div><button className="secondary-button" onClick={()=>router.push("/dashboard")}><Icon name="close" size={18}/>Exit</button></header>
     <main className="assessment-main" id="main-content" tabIndex={-1}>
-      <div className="question-meta">Analytical Reasoning · SSC CGL</div>
-      <h1 className="question-text">Read the statement carefully: “All available records indicate that several passenger trains arrived late this week. Therefore, the railway network is unreliable.” Which of the following most accurately identifies the weakness in this conclusion?</h1>
+      <div className="question-meta">{isChsl?"Quantitative Aptitude · SSC CHSL":"Analytical Reasoning · SSC CGL"}</div>
+      <h1 className="question-text">{isChsl?"A candidate scores 40 marks in a test and reaches 20% of the total marks. What is the maximum mark of the test?":"Read the statement carefully: “All available records indicate that several passenger trains arrived late this week. Therefore, the railway network is unreliable.” Which of the following most accurately identifies the weakness in this conclusion?"}</h1>
       <fieldset className="answer-options" aria-label="Answer options">
-        {options.map((option,index)=><label className="answer-label" key={option}><input type="radio" name="answer" value={String.fromCharCode(65+index)} checked={answer===String.fromCharCode(65+index)} onChange={()=>setAnswer(String.fromCharCode(65+index))}/><span>{String.fromCharCode(65+index)}. {option}</span></label>)}
+        {(isChsl?["160 marks","180 marks","200 marks","220 marks"]:options).map((option,index)=><label className="answer-label" key={option}><input type="radio" name="answer" value={String.fromCharCode(65+index)} checked={answer===String.fromCharCode(65+index)} onChange={()=>saveAnswer(String.fromCharCode(65+index))}/><span>{String.fromCharCode(65+index)}. {option}</span></label>)}
       </fieldset>
     </main>
   </div>;
