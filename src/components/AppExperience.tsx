@@ -86,7 +86,7 @@ export default function AppExperience() {
   const slug=pathname.split("/").filter(Boolean)[0]||"dashboard";
   const titles:Record<string,string>={dashboard:"Dashboard","mock-tests":"Mock Tests",pyqs:"PYQs","chapter-tests":"Chapter Tests","my-tests":"My Tests",bookmarks:"Bookmarks",preferences:"Preferences",profile:"Profile",help:"Help"};
   const title=titles[slug]||slug.split("-").map(w=>w[0]?.toUpperCase?.()+w.slice(1)).join(" ");
-  useEffect(()=>{document.title=`${title} | SSC Flix`;},[title]);
+  useEffect(()=>{document.title=title+" | SSC Flix";},[title]);
 
   if(pathname=== "/assessment") return <Assessment answer={answer} setAnswer={setAnswer} />;
   if(pathname==="/" || pathname.startsWith("/public") || ["/sign-in","/get-started","/about","/contact","/faqs","/privacy","/terms","/disclaimer"].includes(pathname)) return <PublicShell pathname={pathname}/>;
@@ -176,6 +176,11 @@ function Dashboard({exam}:{exam:string}) {
   const summary=calculateStudySummary(records);
   const recent=[...records].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).slice(0,3);
   const completedScored=records.filter(record=>record.status==="completed"&&record.scored);
+  const recommendation=resume
+    ? "Finish "+(resume.mode==="Practice"?"the practice set":"the mock")+" before starting another activity."
+    : completedScored.length>=TREND_ATTEMPT_THRESHOLD
+      ? "Review your English responses in Chapter Tests."
+      : "Start a mock test to establish a study baseline.";
 
   return <>
     <section className="dashboard-greeting" aria-label="Exam context">
@@ -188,10 +193,10 @@ function Dashboard({exam}:{exam:string}) {
         <span className="section-label">Continue Learning</span>
         <h2 id="continue-title">{resume.title}</h2>
         <p>{resume.mode} Mode · {resume.mode==="Practice"
-          ? `${resume.checkedPracticeAnswers ?? 0} of ${resume.totalQuestions} answers checked`
-          : `${resume.answeredQuestions} of ${resume.totalQuestions} questions answered`}</p>
+          ? (resume.checkedPracticeAnswers ?? 0)+" of "+resume.totalQuestions+" answers checked"
+          : resume.answeredQuestions+" of "+resume.totalQuestions+" questions answered"}</p>
       </div>
-      <Link className="primary-button" href={`/assessment?attempt=${encodeURIComponent(resume.id)}&mode=${resume.mode.toLowerCase()}&question=${resume.mode==="Practice"?"4":"9"}`}>
+      <Link className="primary-button" href={"/assessment?attempt="+encodeURIComponent(resume.id)+"&mode="+resume.mode.toLowerCase()+"&question="+(resume.mode==="Practice"?"4":"9")}>
         <Icon name={resume.mode==="Practice"?"chapter":"test"} size={18}/>
         {resume.mode==="Practice"?"Resume practice":"Resume mock"}
       </Link>
@@ -211,8 +216,8 @@ function Dashboard({exam}:{exam:string}) {
       <dl className="metrics">
         <div><dt>Tests Completed</dt><dd>{summary.testsCompleted}</dd></div>
         <div><dt>Questions Attempted</dt><dd>{summary.questionsAttempted}</dd></div>
-        <div><dt>Average Accuracy</dt><dd aria-label={summary.accuracy===null?"Average accuracy unavailable":`${Math.round(summary.accuracy)} percent`}>
-          {summary.accuracy===null?"—":`${Math.round(summary.accuracy)}%`}
+        <div><dt>Average Accuracy</dt><dd aria-label={summary.accuracy===null?"Average accuracy unavailable":Math.round(summary.accuracy)+" percent"}>
+          {summary.accuracy===null?"—":Math.round(summary.accuracy)+"%"}
         </dd></div>
         {summary.averageScore!==null&&<div><dt>Average Score</dt><dd>{Math.round(summary.averageScore)}%</dd></div>}
       </dl>
@@ -228,8 +233,8 @@ function Dashboard({exam}:{exam:string}) {
           {recent.map(record=><li key={record.id}>
             <div><strong>{record.title}</strong><span>{record.mode} · {record.status==="completed"?"Completed":"In progress"}</span></div>
             {record.status==="completed"&&record.score!==undefined&&record.maxMarks!==undefined
-              ?<span className="activity-score" aria-label={`Score ${record.score} out of ${record.maxMarks}`}>{record.score}/{record.maxMarks}</span>
-              :record.status==="in-progress"&&<Link className="text-link" href={`/assessment?attempt=${record.id}&mode=${record.mode.toLowerCase()}&question=${record.mode==="Practice"?"4":"9"`}>Resume</Link>}
+              ?<span className="activity-score" aria-label={"Score "+record.score+" out of "+record.maxMarks}>{record.score}/{record.maxMarks}</span>
+              :record.status==="in-progress"&&<Link className="text-link" href={"/assessment?attempt="+record.id+"&mode="+record.mode.toLowerCase()+"&question="+(record.mode==="Practice"?"4":"9")}>Resume</Link>}
           </li>)}
         </ul>}
       </section>
@@ -248,11 +253,7 @@ function Dashboard({exam}:{exam:string}) {
           <SubjectSnapshot records={records}/>
         </>}
         <p className="next-action"><strong>Recommended next action:</strong>{" "}
-          {resume
-            ? `Finish ${resume.mode==="Practice"?"the practice set":"the mock"} before starting another activity.`
-            : completedScored.length>=TREND_ATTEMPT_THRESHOLD
-              ? "Review your English responses in Chapter Tests."
-              : "Start a mock test to establish a study baseline."}
+          {recommendation}
         </p>
       </section>
     </div>
@@ -278,6 +279,17 @@ function SubjectSnapshot({records}:{records:ActivityRecord[]}) {
   </>;
 }
 
+function MyTestRow({record}:{record:ActivityRecord}) {
+  const statusLabel=record.status==="completed"?"Completed":"In progress";
+  const question=record.mode==="Practice"?"4":"9";
+  const resumeHref="/assessment?attempt="+encodeURIComponent(record.id)+"&mode="+record.mode.toLowerCase()+"&question="+question;
+  return <li>
+    <div><strong>{record.title}</strong><span>{record.mode} · {statusLabel}</span></div>
+    {record.status==="in-progress"&&<Link className="text-link" href={resumeHref}>Resume</Link>}
+    {record.status==="completed"&&record.score!==undefined&&record.maxMarks!==undefined&&<span className="activity-score">{record.score}/{record.maxMarks}</span>}
+  </li>;
+}
+
 function MinimalRoute({title,exam}:{title:string;exam:string}) {
   const router=useRouter();
   if(title==="My Tests"){
@@ -285,14 +297,14 @@ function MinimalRoute({title,exam}:{title:string;exam:string}) {
     return <section className="card">
       <h2>My Tests</h2>
       {records.length===0?<p style={{marginBottom:24}}>No tests or practice activity are saved for {exam}.</p>:<ul className="activity-list minimal-activity">
-        {records.map(record=><li key={record.id}><div><strong>{record.title}</strong><span>{record.mode} · {record.status==="completed"?"Completed":"In progress"}</span></div>
-          {record.status==="in-progress"?<Link className="text-link" href={`/assessment?attempt=${record.id}&mode=${record.mode.toLowerCase()}&question=${record.mode==="Practice"?"4":"9"}`}>Resume</Link>:record.score!==undefined&&record.maxMarks!==undefined?<span className="activity-score">{record.score}/{record.maxMarks}</span>:null}
-        </li>)}
+        {records.map(record=><MyTestRow key={record.id} record={record}/>)}
       </ul>}
       <button className="secondary-button" style={{marginTop:24}} onClick={()=>router.push("/dashboard")}><Icon name="grid"/>Return to Dashboard</button>
     </section>;
   }
-  const known=title==="Preferences"?`Set ${exam} preferences and study choices here.`:`This ${title} destination is ready for its feature page. It is using the shared student workspace for ${exam}.`;
+  const known=title==="Preferences"
+    ?"Set "+exam+" preferences and study choices here."
+    :"This "+title+" destination is ready for its feature page. It is using the shared student workspace for "+exam+".";
   return <section className="card"><h2>{title}</h2><p style={{marginBottom:24}}>{known}</p><button className="secondary-button" onClick={()=>router.push("/dashboard")}><Icon name="grid"/>Return to Dashboard</button></section>;
 }
 
@@ -303,15 +315,13 @@ function Assessment({answer,setAnswer}:{answer:string;setAnswer:(v:string)=>void
   const mode=params.get("mode")==="practice"?"Practice":"Exam";
   const question=params.get("question")==="4"?"4":"9";
   const isChsl=attempt==="chsl-practice-2026-01";
-  const storageKey=`sscflix-answer-${attempt||"default"}`;
+  const storageKey="sscflix-answer-"+(attempt||"default");
   const options=["A logical fallacy occurs only in spoken arguments.","The conclusion follows without sufficient evidence from the premises.","A statement is false unless it is supported by an official source.","The argument uses technical vocabulary to create confusion."];
   useEffect(()=>{
     try{
       const stored=localStorage.getItem(storageKey);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAnswer(stored||(isChsl?"C":"B"));
     }catch{
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAnswer(isChsl?"C":"B");
     }
   },[storageKey,isChsl,setAnswer]);
@@ -333,11 +343,19 @@ function Assessment({answer,setAnswer}:{answer:string;setAnswer:(v:string)=>void
 
 function PublicShell({pathname}:{pathname:string}) {
   const name=pathname=== "/"?"Welcome":pathname.split("/").filter(Boolean)[0].split("-").map(w=>w[0].toUpperCase()+w.slice(1)).join(" ");
+  const footerLinks=[
+    {href:"/about",label:"About SSC Flix"},
+    {href:"/contact",label:"Contact / Support"},
+    {href:"/faqs",label:"FAQs"},
+    {href:"/privacy",label:"Privacy Policy"},
+    {href:"/terms",label:"Terms & Conditions"},
+    {href:"/disclaimer",label:"Disclaimer"},
+  ];
   return <div className="public-shell">
     <header className="public-header"><div className="public-header-inner"><Brand/><div className="public-actions"><Link className="secondary-button" href="/sign-in">Sign In</Link><Link className="primary-button" href="/get-started">Get Started</Link></div></div></header>
     <main id="main-content" className="public-main" tabIndex={-1}><div className="public-container">
       {pathname==="/"?<section className="public-hero"><h1>Prepare clearly. Practise consistently.</h1><p>SSC Flix brings focused mock tests, previous-year questions and chapter practice into one readable student workspace.</p><div style={{display:"flex",gap:8,marginTop:24}}><Link className="primary-button" href="/dashboard">Open Workspace</Link><Link className="secondary-button" href="/assessment">View Assessment</Link></div></section>:<section className="public-hero"><h1>{name}</h1><p>This sample route presents the public shell. It can be replaced with the complete page without changing the shared header or footer.</p><Link className="secondary-button" href="/" style={{marginTop:24}}>Return to welcome</Link></section>}
     </div></main>
-    <footer className="public-footer"><div className="public-container"><nav className="footer-links" aria-label="Footer">{["About","Contact","FAQs","Privacy","Terms","Disclaimer"].map(label=><Link key={label} href={`/${label==="About"?"about":label==="Contact"?"contact":label==="FAQs"?"faqs":label.toLowerCase().replaceAll(" ","-")}`}>{label==="Privacy"?"Privacy Policy":label==="Terms"?"Terms & Conditions":label==="FAQs"?"FAQs":label==="Contact"?"Contact / Support":label==="About"?"About SSC Flix":label}</Link>)}</nav></div></footer>
+    <footer className="public-footer"><div className="public-container"><nav className="footer-links" aria-label="Footer">{footerLinks.map(link=><Link key={link.href} href={link.href}>{link.label}</Link>)}</nav></div></footer>
   </div>;
 }
